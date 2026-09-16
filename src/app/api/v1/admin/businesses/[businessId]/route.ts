@@ -1,0 +1,7 @@
+import { z } from "zod";
+import { getAdminSession } from "@/lib/admin-auth";
+import { connectDb } from "@/lib/db";
+import { Business, SubscriptionEvent } from "@/lib/models";
+import { fail, ok } from "@/lib/http";
+const schema=z.object({configuredStatus:z.enum(["active","suspended","legacy_unmanaged"]).optional(),paidThrough:z.string().datetime().nullable().optional(),negotiatedPrice:z.number().nonnegative().nullable().optional(),agreementNotes:z.string().optional()});
+export async function PATCH(request:Request,context:{params:Promise<{businessId:string}>}){const admin=await getAdminSession();if(!admin||admin.role==="viewer")return fail("Forbidden",403);try{await connectDb();const input=schema.parse(await request.json());const{businessId}=await context.params;const before=await Business.findById(businessId).lean();if(!before)return fail("Business not found",404);const update={...input,...(input.paidThrough!==undefined?{paidThrough:input.paidThrough?new Date(input.paidThrough):null}:{})};const business=await Business.findByIdAndUpdate(businessId,{$set:update},{new:true,runValidators:true});await SubscriptionEvent.create({businessId,type:"contract_adjusted",actorType:"admin",actorId:admin.sub,reason:input.agreementNotes||"Administrative adjustment",before,after:business?.toObject()});return ok(business)}catch(error){return fail(error instanceof Error?error.message:"Update failed",400)}}
